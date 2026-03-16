@@ -1,7 +1,7 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { launchToken, launchTokenWithPayer } from './solana';
 
 type LaunchResult = {
@@ -18,6 +18,55 @@ const tutorialSteps = [
   'Press Launch Token and approve the transaction in Phantom. The app creates the mint, creates the recipient token account, and mints the supply in one flow.',
   'Copy the mint address after launch. If you want Dexscreener visibility later, create a supported liquidity pool on Solana mainnet and seed it with liquidity.',
 ];
+
+const STORAGE_KEYS = {
+  tokenName: 'ragnar.tokenName',
+  tokenSymbol: 'ragnar.tokenSymbol',
+  description: 'ragnar.description',
+  initialSupply: 'ragnar.initialSupply',
+  website: 'ragnar.website',
+  xUrl: 'ragnar.xUrl',
+  telegram: 'ragnar.telegram',
+  recipient: 'ragnar.recipient',
+  socialLinks: 'ragnar.socialLinks',
+} as const;
+
+const DEFAULTS = {
+  tokenName: 'Ragnar Token',
+  tokenSymbol: 'RAGN',
+  description: 'Battle-forged community token.',
+  initialSupply: '1000000',
+  website: 'https://slop.club',
+  xUrl: 'https://x.com/slopfather',
+  telegram: 'https://t.me/slopfather',
+};
+
+function getStoredValue(key: string, fallback: string): string {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  return window.localStorage.getItem(key) ?? fallback;
+}
+
+function getStoredBoolean(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  const raw = window.localStorage.getItem(key);
+  if (raw === null) {
+    return fallback;
+  }
+
+  return raw === 'true';
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function OptionRow({
   label,
@@ -49,24 +98,24 @@ function App() {
   const wallet = useWallet();
   const { connection } = useConnection();
 
-  const [tokenName, setTokenName] = useState('Ragnar Token');
-  const [tokenSymbol, setTokenSymbol] = useState('RAGN');
-  const [description, setDescription] = useState('Battle-forged community token.');
+  const [tokenName, setTokenName] = useState(() => getStoredValue(STORAGE_KEYS.tokenName, DEFAULTS.tokenName));
+  const [tokenSymbol, setTokenSymbol] = useState(() => getStoredValue(STORAGE_KEYS.tokenSymbol, DEFAULTS.tokenSymbol));
+  const [description, setDescription] = useState(() => getStoredValue(STORAGE_KEYS.description, DEFAULTS.description));
   const [decimals, setDecimals] = useState(9);
-  const [initialSupply, setInitialSupply] = useState('1000000');
-  const [recipient, setRecipient] = useState('');
+  const [initialSupply, setInitialSupply] = useState(() => getStoredValue(STORAGE_KEYS.initialSupply, DEFAULTS.initialSupply));
+  const [recipient, setRecipient] = useState(() => getStoredValue(STORAGE_KEYS.recipient, ''));
 
   const [creatorInfo, setCreatorInfo] = useState(false);
-  const [socialLinks, setSocialLinks] = useState(false);
+  const [socialLinks, setSocialLinks] = useState(() => getStoredBoolean(STORAGE_KEYS.socialLinks, true));
   const [liquidityPool, setLiquidityPool] = useState(false);
 
   const [revokeFreeze, setRevokeFreeze] = useState(true);
   const [revokeMint, setRevokeMint] = useState(false);
   const [revokeUpdate, setRevokeUpdate] = useState(false);
 
-  const [telegram, setTelegram] = useState('');
-  const [website, setWebsite] = useState('');
-  const [xUrl, setXUrl] = useState('');
+  const [telegram, setTelegram] = useState(() => getStoredValue(STORAGE_KEYS.telegram, DEFAULTS.telegram));
+  const [website, setWebsite] = useState(() => getStoredValue(STORAGE_KEYS.website, DEFAULTS.website));
+  const [xUrl, setXUrl] = useState(() => getStoredValue(STORAGE_KEYS.xUrl, DEFAULTS.xUrl));
   const [useFreeDevnetMode, setUseFreeDevnetMode] = useState(true);
   const [burnerWallet] = useState(() => Keypair.generate());
   const [status, setStatus] = useState('Ready to launch. Free Devnet Mode is enabled by default.');
@@ -83,6 +132,42 @@ function App() {
 
   const shortBurner = `${burnerWallet.publicKey.toBase58().slice(0, 6)}...${burnerWallet.publicKey.toBase58().slice(-6)}`;
 
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.tokenName, tokenName);
+  }, [tokenName]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.tokenSymbol, tokenSymbol);
+  }, [tokenSymbol]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.description, description);
+  }, [description]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.initialSupply, initialSupply);
+  }, [initialSupply]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.website, website);
+  }, [website]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.xUrl, xUrl);
+  }, [xUrl]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.telegram, telegram);
+  }, [telegram]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.recipient, recipient);
+  }, [recipient]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.socialLinks, String(socialLinks));
+  }, [socialLinks]);
+
   const ensureFreeModeBalance = async () => {
     const minimumLamports = Math.floor(0.03 * LAMPORTS_PER_SOL);
     const currentBalance = await connection.getBalance(burnerWallet.publicKey, 'confirmed');
@@ -91,15 +176,43 @@ function App() {
       return;
     }
 
-    const airdropSignature = await connection.requestAirdrop(burnerWallet.publicKey, LAMPORTS_PER_SOL);
-    const latest = await connection.getLatestBlockhash('confirmed');
-    await connection.confirmTransaction(
-      {
-        signature: airdropSignature,
-        blockhash: latest.blockhash,
-        lastValidBlockHeight: latest.lastValidBlockHeight,
-      },
-      'confirmed',
+    const endpoints = Array.from(
+      new Set([
+        connection.rpcEndpoint,
+        'https://api.devnet.solana.com',
+        'https://rpc.ankr.com/solana_devnet',
+      ]),
+    );
+
+    const airdropAmount = Math.floor(0.2 * LAMPORTS_PER_SOL);
+    let lastError = 'unknown error';
+
+    for (const endpoint of endpoints) {
+      const rpc = endpoint === connection.rpcEndpoint ? connection : new Connection(endpoint, 'confirmed');
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const airdropSignature = await rpc.requestAirdrop(burnerWallet.publicKey, airdropAmount);
+          const latest = await rpc.getLatestBlockhash('confirmed');
+          await rpc.confirmTransaction(
+            {
+              signature: airdropSignature,
+              blockhash: latest.blockhash,
+              lastValidBlockHeight: latest.lastValidBlockHeight,
+            },
+            'confirmed',
+          );
+
+          return;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : 'unknown error';
+          await wait(400 * attempt);
+        }
+      }
+    }
+
+    throw new Error(
+      `Devnet faucet is busy right now. Please click launch again in 20-60 seconds. If it keeps failing, switch Free Devnet Mode off and use a wallet with devnet SOL. Last faucet error: ${lastError}`,
     );
   };
 
