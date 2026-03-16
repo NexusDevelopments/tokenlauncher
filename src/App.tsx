@@ -68,6 +68,22 @@ function wait(ms: number): Promise<void> {
   });
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function OptionRow({
   label,
   description,
@@ -176,15 +192,9 @@ function App() {
       return;
     }
 
-    const endpoints = Array.from(
-      new Set([
-        connection.rpcEndpoint,
-        'https://api.devnet.solana.com',
-        'https://rpc.ankr.com/solana_devnet',
-      ]),
-    );
+    const endpoints = Array.from(new Set([connection.rpcEndpoint, 'https://api.devnet.solana.com']));
 
-    const airdropAmount = Math.floor(0.2 * LAMPORTS_PER_SOL);
+    const airdropAmount = Math.floor(0.1 * LAMPORTS_PER_SOL);
     let lastError = 'unknown error';
 
     for (const endpoint of endpoints) {
@@ -205,7 +215,7 @@ function App() {
 
           return;
         } catch (error) {
-          lastError = error instanceof Error ? error.message : 'unknown error';
+          lastError = getErrorMessage(error);
           await wait(400 * attempt);
         }
       }
