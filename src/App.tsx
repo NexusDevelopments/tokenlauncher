@@ -1,7 +1,8 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { launchToken } from './solana';
+import { Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { launchToken, launchTokenWithPayer } from './solana';
 
 type LaunchResult = {
   mintAddress: string;
@@ -66,7 +67,9 @@ function App() {
   const [telegram, setTelegram] = useState('');
   const [website, setWebsite] = useState('');
   const [xUrl, setXUrl] = useState('');
-  const [status, setStatus] = useState('Ready to launch. Connect wallet and fill recipient.');
+  const [useFreeDevnetMode, setUseFreeDevnetMode] = useState(true);
+  const [burnerWallet] = useState(() => Keypair.generate());
+  const [status, setStatus] = useState('Ready to launch. Free Devnet Mode is enabled by default.');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<LaunchResult | null>(null);
 
@@ -78,39 +81,83 @@ function App() {
     [],
   );
 
+  const shortBurner = `${burnerWallet.publicKey.toBase58().slice(0, 6)}...${burnerWallet.publicKey.toBase58().slice(-6)}`;
+
+  const ensureFreeModeBalance = async () => {
+    const minimumLamports = Math.floor(0.03 * LAMPORTS_PER_SOL);
+    const currentBalance = await connection.getBalance(burnerWallet.publicKey, 'confirmed');
+
+    if (currentBalance >= minimumLamports) {
+      return;
+    }
+
+    const airdropSignature = await connection.requestAirdrop(burnerWallet.publicKey, LAMPORTS_PER_SOL);
+    const latest = await connection.getLatestBlockhash('confirmed');
+    await connection.confirmTransaction(
+      {
+        signature: airdropSignature,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      },
+      'confirmed',
+    );
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setResult(null);
 
-    if (!wallet.connected || !wallet.publicKey || !wallet.signTransaction) {
-      setStatus('Connect a wallet that supports transaction signing.');
-      return;
-    }
-
-    if (!recipient.trim()) {
-      setStatus('Recipient address is required.');
-      return;
-    }
-
     try {
       setLoading(true);
-      setStatus('Creating mint and sending transaction...');
 
-      const launchResult = await launchToken({
-        connection,
-        wallet: {
-          publicKey: wallet.publicKey,
-          signTransaction: wallet.signTransaction,
-        },
-        tokenName,
-        tokenSymbol,
-        decimals,
-        initialSupply,
-        recipient,
-        revokeMint,
-        revokeFreeze,
-        revokeUpdate,
-      });
+      let launchResult: LaunchResult;
+      const targetRecipient = recipient.trim() || burnerWallet.publicKey.toBase58();
+
+      if (useFreeDevnetMode) {
+        setStatus('Free mode: requesting devnet airdrop for temporary wallet...');
+        await ensureFreeModeBalance();
+
+        setStatus('Free mode: creating mint and sending transaction...');
+        launchResult = await launchTokenWithPayer({
+          connection,
+          payer: burnerWallet,
+          tokenName,
+          tokenSymbol,
+          decimals,
+          initialSupply,
+          recipient: targetRecipient,
+          revokeMint,
+          revokeFreeze,
+          revokeUpdate,
+        });
+      } else {
+        if (!wallet.connected || !wallet.publicKey || !wallet.signTransaction) {
+          setStatus('Connect a wallet that supports transaction signing, or enable Free Devnet Mode.');
+          return;
+        }
+
+        if (!recipient.trim()) {
+          setStatus('Recipient address is required when Free Devnet Mode is off.');
+          return;
+        }
+
+        setStatus('Creating mint and sending transaction...');
+        launchResult = await launchToken({
+          connection,
+          wallet: {
+            publicKey: wallet.publicKey,
+            signTransaction: wallet.signTransaction,
+          },
+          tokenName,
+          tokenSymbol,
+          decimals,
+          initialSupply,
+          recipient,
+          revokeMint,
+          revokeFreeze,
+          revokeUpdate,
+        });
+      }
 
       setResult(launchResult);
       setStatus('Token launched successfully.');
@@ -138,6 +185,16 @@ function App() {
         </div>
         <WalletMultiButton className="wallet-btn" />
       </header>
+
+      <section className="free-mode-bar">
+        <label className="free-mode-toggle">
+          <input type="checkbox" checked={useFreeDevnetMode} onChange={(e) => setUseFreeDevnetMode(e.target.checked)} />
+          <span>Free Devnet Mode</span>
+        </label>
+        <p>
+          Temporary wallet: <strong>{shortBurner}</strong>. No buy flow needed.
+        </p>
+      </section>
 
       <section className="info-strip">
         <article className="info-card emphasis">
@@ -255,8 +312,8 @@ function App() {
             <input
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
-              placeholder="Enter address who will be the receiver of the token"
-              required
+              placeholder={useFreeDevnetMode ? `Optional in free mode. Leave blank to use ${shortBurner}` : 'Enter address who will be the receiver of the token'}
+              required={!useFreeDevnetMode}
             />
           </label>
         </section>

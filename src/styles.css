@@ -74,9 +74,44 @@ a {
 .launcher-card,
 .result-card,
 .tutorial-card,
-.info-strip {
+.info-strip,
+.free-mode-bar {
   position: relative;
   z-index: 1;
+}
+
+.free-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  background: rgba(10, 10, 12, 0.8);
+  border: 1px solid rgba(229, 9, 20, 0.35);
+  border-radius: 14px;
+  padding: 0.8rem 0.95rem;
+}
+
+.free-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+}
+
+.free-mode-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.free-mode-toggle span {
+  font-weight: 700;
+}
+
+.free-mode-bar p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .hero {
@@ -479,6 +514,11 @@ textarea:focus {
   .tutorial-list,
   .faq-grid {
     grid-template-columns: 1fr;
+  }
+
+  .free-mode-bar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .tutorial-header {

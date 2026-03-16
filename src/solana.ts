@@ -12,6 +12,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  sendAndConfirmTransaction,
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
@@ -24,6 +25,19 @@ export interface WalletSigner {
 export interface LaunchTokenInput {
   connection: Connection;
   wallet: WalletSigner;
+  tokenName: string;
+  tokenSymbol: string;
+  decimals: number;
+  initialSupply: string;
+  recipient: string;
+  revokeMint: boolean;
+  revokeFreeze: boolean;
+  revokeUpdate: boolean;
+}
+
+export interface LaunchTokenWithPayerInput {
+  connection: Connection;
+  payer: Keypair;
   tokenName: string;
   tokenSymbol: string;
   decimals: number;
@@ -55,6 +69,19 @@ function toBaseUnits(rawAmount: string, decimals: number): bigint {
   const paddedFraction = fraction.padEnd(decimals, '0');
   const normalized = `${whole}${paddedFraction}`.replace(/^0+(?=\d)/, '');
   return BigInt(normalized || '0');
+}
+
+function buildLaunchNotes(revokeUpdate: boolean): string[] {
+  const notes = [
+    'Token metadata and social links require Metaplex metadata instructions, which are not included in this free client-only build.',
+    'Liquidity pool creation requires DEX-specific contracts and cannot be done as a generic one-click action from this page.',
+  ];
+
+  if (revokeUpdate) {
+    notes.push('Revoke Update is selected as a checklist item. On-chain metadata authority revoke requires Metaplex metadata instructions.');
+  }
+
+  return notes;
 }
 
 export async function launchToken(input: LaunchTokenInput): Promise<LaunchTokenResult> {
@@ -138,14 +165,94 @@ export async function launchToken(input: LaunchTokenInput): Promise<LaunchTokenR
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
   await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
 
-  const notes = [
-    'Token metadata and social links require Metaplex metadata instructions, which are not included in this free client-only build.',
-    'Liquidity pool creation requires DEX-specific contracts and cannot be done as a generic one-click action from this page.',
-  ];
+  const notes = buildLaunchNotes(revokeUpdate);
 
-  if (revokeUpdate) {
-    notes.push('Revoke Update is selected as a checklist item. On-chain metadata authority revoke requires Metaplex metadata instructions.');
+  return {
+    mintAddress: mint.publicKey.toBase58(),
+    ownerTokenAccount: recipientAta.toBase58(),
+    signature,
+    notes,
+  };
+}
+
+export async function launchTokenWithPayer(input: LaunchTokenWithPayerInput): Promise<LaunchTokenResult> {
+  const {
+    connection,
+    payer,
+    tokenName,
+    tokenSymbol,
+    decimals,
+    initialSupply,
+    recipient,
+    revokeMint,
+    revokeFreeze,
+    revokeUpdate,
+  } = input;
+
+  if (!tokenName.trim() || !tokenSymbol.trim()) {
+    throw new Error('Token name and symbol are required.');
   }
+
+  const owner = new PublicKey(recipient);
+  const mintAmount = toBaseUnits(initialSupply, decimals);
+
+  const mint = Keypair.generate();
+  const recipientAta = getAssociatedTokenAddressSync(mint.publicKey, owner, false, TOKEN_PROGRAM_ID);
+  const rentLamports = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+
+  const tx = new Transaction();
+
+  tx.add(
+    SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: mint.publicKey,
+      lamports: rentLamports,
+      space: MINT_SIZE,
+      programId: TOKEN_PROGRAM_ID,
+    }),
+    createInitializeMintInstruction(
+      mint.publicKey,
+      decimals,
+      payer.publicKey,
+      revokeFreeze ? null : payer.publicKey,
+      TOKEN_PROGRAM_ID,
+    ),
+    createAssociatedTokenAccountInstruction(
+      payer.publicKey,
+      recipientAta,
+      owner,
+      mint.publicKey,
+      TOKEN_PROGRAM_ID,
+    ),
+    createMintToInstruction(
+      mint.publicKey,
+      recipientAta,
+      payer.publicKey,
+      mintAmount,
+      [],
+      TOKEN_PROGRAM_ID,
+    ),
+  );
+
+  if (revokeMint) {
+    tx.add(
+      createSetAuthorityInstruction(
+        mint.publicKey,
+        payer.publicKey,
+        AuthorityType.MintTokens,
+        null,
+        [],
+        TOKEN_PROGRAM_ID,
+      ),
+    );
+  }
+
+  const signature = await sendAndConfirmTransaction(connection, tx, [payer, mint], {
+    commitment: 'confirmed',
+  });
+
+  const notes = buildLaunchNotes(revokeUpdate);
+  notes.push('Free Devnet Mode used an in-app temporary payer wallet funded by a devnet airdrop.');
 
   return {
     mintAddress: mint.publicKey.toBase58(),
